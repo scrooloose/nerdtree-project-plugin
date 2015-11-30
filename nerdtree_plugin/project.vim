@@ -39,6 +39,7 @@ endfunction
 
 augroup nerdtreeproject
     autocmd bufunload,bufwipeout * call g:NERDTreeProject.UpdateProjectInBuf(bufnr(bufname(expand("<afile>"))))
+    autocmd vimenter * call s:Project.LoadFromCurrentPathOrCWD()
 augroup end
 
 "CLASS: Project
@@ -101,6 +102,8 @@ function! s:Project.New(name, nerdtree, ...) abort
         let newObj._openDirs = newObj._extractOpenDirs(a:nerdtree.root)
     endif
 
+    let newObj._hiddenDirs = has_key(opts, 'hiddenDirs') ? opts['hiddenDirs'] : []
+
     return newObj
 endfunction
 
@@ -114,9 +117,47 @@ function! s:Project.FindByName(name) abort
     throw "NERDTree.NoProjectError: no project found for name: \"". a:name  .'"'
 endfunction
 
+" FUNCTION: Project.FindByRoot(dir) {{{1
+function! s:Project.FindByRoot(dir) abort
+    for i in s:Project.All()
+        if i.getRootPath().equals(a:dir)
+            return i
+        endif
+    endfor
+    throw "NERDTree.NoProjectError: no project found for root: \"". a:dir.str()  .'"'
+endfunction
+
+" FUNCTION: Project.LoadFromCurrentPathOrCWD() {{{1
+function! s:Project.LoadFromCurrentPathOrCWD() abort
+    let dir = expand("%:p:h")
+    if empty(dir)
+        let dir = getcwd()
+    endif
+
+    try
+        let jumpBack = filereadable(expand("%"))
+        let proj = s:Project.FindByRoot(g:NERDTreePath.New(dir))
+        call proj.open()
+
+        if jumpBack
+            wincmd w
+        endif
+    catch /NERDTree.NoProjectError/
+    endtry
+
+endfunction
+
 " FUNCTION: Project.Open(name) {{{1
 function! s:Project.Open(name) abort
     call s:Project.FindByName(a:name).open()
+endfunction
+
+" FUNCTION: Project.OpenForRoot(dir) {{{1
+function! s:Project.OpenForRoot(dir) abort
+    let p = s:Project.FindByRoot(a:dir)
+    if !empty(p)
+        call p.open()
+    endif
 endfunction
 
 " FUNCTION: Project.ProjectFileName() {{{1
@@ -130,11 +171,21 @@ function! s:Project.Read() abort
         return []
     endif
 
-    exec "let projHashes = " . readfile(s:Project.ProjectFileName())[0]
+    try
+        exec "let projHashes = " . readfile(s:Project.ProjectFileName())[0]
+    catch
+        return []
+    endtry
 
     for projHash in projHashes
+
+        let hiddenDirs = []
+        for path in projHash['hiddenDirs']
+            call add(hiddenDirs, g:NERDTreePath.New(path))
+        endfor
+
         let nerdtree = g:NERDTree.New(g:NERDTreePath.New(projHash['rootPath']), "tab")
-        let project = s:Project.New(projHash['name'], nerdtree, { 'openDirs': projHash['openDirs']})
+        let project = s:Project.New(projHash['name'], nerdtree, { 'openDirs': projHash['openDirs'], 'hiddenDirs': hiddenDirs })
         call add(s:Project.All(), project)
     endfor
 endfunction
@@ -161,10 +212,16 @@ function! s:Project.Write() abort
     let projHashes = []
 
     for proj in s:Project.All()
+        let hiddenDirs = []
+        for dir in proj.getHiddenDirs()
+            call add(hiddenDirs, dir.str())
+        endfor
+
         let hash = {
             \ 'name': proj.getName(),
             \ 'openDirs': proj.getOpenDirs(),
-            \ 'rootPath': proj.getRootPath().str()
+            \ 'rootPath': proj.getRootPath().str(),
+            \ 'hiddenDirs': hiddenDirs
         \ }
 
         call add(projHashes, hash)
@@ -194,6 +251,11 @@ function! s:Project._extractOpenDirs(rootNode) abort
     return retVal
 endfunction
 
+" FUNCTION: Project.getHiddenDirs() {{{1
+function! s:Project.getHiddenDirs() abort
+    return self._hiddenDirs
+endfunction
+
 " FUNCTION: Project.getName() {{{1
 function! s:Project.getName() abort
     return self._name
@@ -209,24 +271,48 @@ function! s:Project.getRootPath() abort
     return self._rootPath
 endfunction
 
-" FUNCTION: Project.open() {{{1
-function! s:Project.open() abort
-    if g:NERDTree.IsOpen()
-        call g:NERDTree.CursorToTreeWin()
-    else
-        call g:NERDTreeCreator.ToggleTabTree('')
+" FUNCTION: Project.hideDir(path) {{{1
+function! s:Project.hideDir(path) abort
+    if self.isHidden(a:path)
+        return
     endif
 
-    let newRoot = g:NERDTreeFileNode.New(self.getRootPath(), b:NERDTree)
-    call b:NERDTree.changeRoot(newRoot)
+    call add(self._hiddenDirs, a:path)
+endfunction
+
+" FUNCTION: Project.isHidden(path) {{{1
+function! s:Project.isHidden(path) abort
+    for dir in self._hiddenDirs
+        if a:path.equals(dir)
+            return 1
+        endif
+    endfor
+endfunction
+
+" FUNCTION: Project.open() {{{1
+function! s:Project.open() abort
+    call g:NERDTreeCreator.CreateTabTree(self.getRootPath().str())
 
     for dir in self.getOpenDirs()
         let p = g:NERDTreePath.New(dir)
         call b:NERDTree.root.reveal(p, { "open": 1 })
     endfor
 
-    call b:NERDTree.render()
     let b:NERDTree.__currentProject = self
+    call b:NERDTree.render()
+endfunction
+
+" FUNCTION: Project.unhideDir(path) {{{1
+function! s:Project.unhideDir(path) abort
+    if !self.isHidden(a:path)
+        return
+    endif
+
+    for idx in range(0, len(self._hiddenDirs))
+        if self._hiddenDirs[idx].equals(a:path)
+            return remove(self._hiddenDirs, idx)
+        endif
+    endfor
 endfunction
 
 " FUNCTION: Project.update(nerdtree) {{{1
@@ -238,6 +324,73 @@ function s:Project.update(nerdtree)
 
     let self._openDirs = self._extractOpenDirs(a:nerdtree.root)
     call s:Project.Write()
+endfunction
+
+"Filtering glue {{{1
+"============================================================
+"autocmd vimenter * call s:setupPathFilter()
+
+function! s:setupPathFilter() abort
+    call NERDTreeAddPathFilter("ProjectPathFilter")
+endfunction
+
+function! ProjectPathFilter(params) abort
+    let nerdtree = a:params['nerdtree']
+
+    "bail if we haven't loaded a project
+    if !exists('nerdtree.__currentProject')
+        return
+    endif
+
+    let proj = nerdtree.__currentProject
+
+    "bail if not inside the project in question
+    if !a:params['nerdtree'].getRoot().path.equals(proj.getRootPath())
+        return 0
+    endif
+
+    let p = a:params['path']
+
+    for dir in proj.getHiddenDirs()
+        if p.isUnder(dir) || p.isAncestor(dir)
+            return 1
+        endif
+    endfor
+endfunction
+
+let projectMenu = NERDTreeAddSubmenu({'text': '(p)rojects', 'shortcut': 'p'})
+call NERDTreeAddMenuItem({
+            \ 'text': '(h)ide directory',
+            \ 'shortcut': 'h',
+            \ 'parent': projectMenu,
+            \ 'callback': 'NERDTreeProjectHideMenuItemCallback'
+            \ })
+
+function! NERDTreeProjectHideMenuItemCallback() abort
+    let node = g:NERDTreeDirNode.GetSelected()
+    if empty(node)
+        return
+    endif
+
+    call b:NERDTree.__currentProject.hideDir(node.path)
+    call b:NERDTree.render()
+endfunction
+
+call NERDTreeAddMenuItem({
+            \ 'text': '(u)nhide directory',
+            \ 'shortcut': 'u',
+            \ 'parent': projectMenu,
+            \ 'callback': 'NERDTreeProjectUnhideMenuItemCallback'
+            \ })
+
+function! NERDTreeProjectUnhideMenuItemCallback() abort
+    let node = g:NERDTreeDirNode.GetSelected()
+    if empty(node)
+        return
+    endif
+
+    call b:NERDTree.__currentProject.unhideDir(node.path)
+    call b:NERDTree.render()
 endfunction
 
 " vi: fdm=marker
