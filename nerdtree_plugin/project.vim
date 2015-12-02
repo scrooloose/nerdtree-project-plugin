@@ -103,6 +103,8 @@ function! s:Project.New(name, nerdtree, ...) abort
 
     let newObj._hiddenDirs = has_key(opts, 'hiddenDirs') ? opts['hiddenDirs'] : []
 
+    call newObj.rebuildHiddenRegex()
+
     return newObj
 endfunction
 
@@ -169,14 +171,8 @@ function! s:Project.Read() abort
     endtry
 
     for projHash in projHashes
-
-        let hiddenDirs = []
-        for path in projHash['hiddenDirs']
-            call add(hiddenDirs, g:NERDTreePath.New(path))
-        endfor
-
         let nerdtree = g:NERDTree.New(g:NERDTreePath.New(projHash['rootPath']), "tab")
-        let project = s:Project.New(projHash['name'], nerdtree, { 'openDirs': projHash['openDirs'], 'hiddenDirs': hiddenDirs })
+        let project = s:Project.New(projHash['name'], nerdtree, { 'openDirs': projHash['openDirs'], 'hiddenDirs': projHash['hiddenDirs'] })
         call add(s:Project.All(), project)
     endfor
 endfunction
@@ -203,16 +199,11 @@ function! s:Project.Write() abort
     let projHashes = []
 
     for proj in s:Project.All()
-        let hiddenDirs = []
-        for dir in proj.getHiddenDirs()
-            call add(hiddenDirs, dir.str())
-        endfor
-
         let hash = {
             \ 'name': proj.getName(),
             \ 'openDirs': proj.getOpenDirs(),
             \ 'rootPath': proj.getRootPath().str(),
-            \ 'hiddenDirs': hiddenDirs
+            \ 'hiddenDirs': proj.getHiddenDirs()
         \ }
 
         call add(projHashes, hash)
@@ -223,7 +214,6 @@ endfunction
 
 "Instance Methods
 "============================================================
-
 " FUNCTION: Project.extractOpenDirs(rootNode) {{{1
 function! s:Project._extractOpenDirs(rootNode) abort
     let retVal = []
@@ -269,12 +259,13 @@ function! s:Project.hideDir(path) abort
     endif
 
     call add(self._hiddenDirs, a:path)
+    call self.rebuildHiddenRegex()
 endfunction
 
 " FUNCTION: Project.isHidden(path) {{{1
 function! s:Project.isHidden(path) abort
     for dir in self._hiddenDirs
-        if a:path.equals(dir)
+        if dir == a:path
             return 1
         endif
     endfor
@@ -293,17 +284,24 @@ function! s:Project.open() abort
     call b:NERDTree.render()
 endfunction
 
+" FUNCTION: Project.rebuildHiddenRegex() {{{1
+function! s:Project.rebuildHiddenRegex() abort
+    let hiddenDirs = join(map(copy(self._hiddenDirs), "v:val . '\\.\\*'"), '\|')
+    let self._hiddenRegex = '\M\(' . hiddenDirs . '\)'
+endfunction
+
 " FUNCTION: Project.unhideDir(path) {{{1
 function! s:Project.unhideDir(path) abort
     if !self.isHidden(a:path)
         return
     endif
 
-    for idx in range(0, len(self._hiddenDirs))
-        if self._hiddenDirs[idx].equals(a:path)
-            return remove(self._hiddenDirs, idx)
-        endif
-    endfor
+    let idx = index(self._hiddenDirs, a:path)
+    if idx != -1
+        call remove(self._hiddenDirs, idx)
+    endif
+
+    call self.rebuildHiddenRegex()
 endfunction
 
 " FUNCTION: Project.update(nerdtree) {{{1
@@ -319,11 +317,8 @@ endfunction
 
 "Filtering glue {{{1
 "============================================================
-"autocmd vimenter * call s:setupPathFilter()
 
-function! s:setupPathFilter() abort
-    call NERDTreeAddPathFilter("ProjectPathFilter")
-endfunction
+call NERDTreeAddPathFilter("ProjectPathFilter")
 
 function! ProjectPathFilter(params) abort
     let nerdtree = a:params['nerdtree']
@@ -333,20 +328,13 @@ function! ProjectPathFilter(params) abort
         return
     endif
 
-    let proj = nerdtree.__currentProject
-
-    "bail if not inside the project in question
-    if !a:params['nerdtree'].getRoot().path.equals(proj.getRootPath())
+    if len(nerdtree.__currentProject._hiddenDirs) == 0
         return 0
     endif
 
     let p = a:params['path']
 
-    for dir in proj.getHiddenDirs()
-        if p.isUnder(dir) || p.isAncestor(dir)
-            return 1
-        endif
-    endfor
+    return p.str() =~ nerdtree.__currentProject._hiddenRegex
 endfunction
 
 let projectMenu = NERDTreeAddSubmenu({'text': '(p)rojects', 'shortcut': 'p'})
@@ -363,7 +351,7 @@ function! NERDTreeProjectHideMenuItemCallback() abort
         return
     endif
 
-    call b:NERDTree.__currentProject.hideDir(node.path)
+    call b:NERDTree.__currentProject.hideDir(node.path.str())
     call b:NERDTree.render()
 endfunction
 
@@ -380,7 +368,7 @@ function! NERDTreeProjectUnhideMenuItemCallback() abort
         return
     endif
 
-    call b:NERDTree.__currentProject.unhideDir(node.path)
+    call b:NERDTree.__currentProject.unhideDir(node.path.str())
     call b:NERDTree.render()
 endfunction
 
