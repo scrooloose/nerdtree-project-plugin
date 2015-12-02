@@ -22,12 +22,12 @@ if exists("g:loaded_nerdtree_project_plugin")
 endif
 let g:loaded_nerdtree_project_plugin=1
 
-
 "Glue code - wiring up s:Project into nerdtree
 "============================================================
 command! -nargs=1 NERDTreeProjectSave call g:NERDTreeProject.Add(<q-args>, b:NERDTree)
 command! -nargs=1 -complete=customlist,NERDTreeCompleteProjectNames NERDTreeProjectLoad call g:NERDTreeProject.Open(<q-args>)
 command! -nargs=1 -complete=customlist,NERDTreeCompleteProjectNames NERDTreeProjectRm call g:NERDTreeProject.Remove(<q-args>)
+command! -nargs=0 -complete=customlist,NERDTreeCompleteProjectNames NERDTreeProjectLoadFromCWD call g:NERDTreeProject.LoadFromCWD()
 
 function! NERDTreeCompleteProjectNames(A,L,P) abort
     if empty(s:Project.All())
@@ -39,7 +39,6 @@ endfunction
 
 augroup nerdtreeproject
     autocmd bufunload,bufwipeout * call g:NERDTreeProject.UpdateProjectInBuf(bufnr(bufname(expand("<afile>"))))
-    autocmd vimenter * call s:Project.LoadFromCurrentPathOrCWD()
 augroup end
 
 "CLASS: Project
@@ -127,24 +126,16 @@ function! s:Project.FindByRoot(dir) abort
     throw "NERDTree.NoProjectError: no project found for root: \"". a:dir.str()  .'"'
 endfunction
 
-" FUNCTION: Project.LoadFromCurrentPathOrCWD() {{{1
-function! s:Project.LoadFromCurrentPathOrCWD() abort
-    let dir = expand("%:p:h")
-    if empty(dir)
-        let dir = getcwd()
-    endif
-
+" FUNCTION: Project.LoadFromCWD() {{{1
+function! s:Project.LoadFromCWD() abort
     try
-        let jumpBack = filereadable(expand("%"))
-        let proj = s:Project.FindByRoot(g:NERDTreePath.New(dir))
+        let proj = s:Project.FindByRoot(g:NERDTreePath.New(getcwd()))
         call proj.open()
-
-        if jumpBack
-            wincmd w
-        endif
+        wincmd w
     catch /NERDTree.NoProjectError/
+        call nerdtree#echo("Couldn't find a project for root: " . getcwd())
+        NERDTree
     endtry
-
 endfunction
 
 " FUNCTION: Project.Open(name) {{{1
