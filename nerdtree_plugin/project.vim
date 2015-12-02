@@ -1,19 +1,34 @@
+" Features of projects:
+"
+" * Tree state (open/closed dirs) is remembered between sessions
+" * Dirs can be hidden.
+"
 " Usage:
 "
-"   Create a project from the current nerdtree with
-"     :NERDTreeProjectSave <name>
+"     Creating/Loading/Deleting projects:
 "
-"   Load a project with
-"     :NERDTreeProjectLoad <name>
+"         Create a project from the current nerdtree with
+"           :NERDTreeProjectSave <name>
 "
-"   Delete a project with
-"     :NERDTreeProjectRm <name>
+"         Load a project with
+"           :NERDTreeProjectLoad <name>
 "
-"   Note: <name> above will tab complete.
+"         Load a project from the current CWD
+"           :NERDTreeProjectLoadFromCWD
+"
+"         Delete a project with
+"           :NERDTreeProjectRm <name>
 "
 "
-" Tree state (open/closed dirs) will be remembered when you return to a
-" project.
+"         Note: <name> above will tab complete.
+"
+"     Hiding/Unhiding directories in projects
+"         To hide a dir, put the cursor on it and hit 'mph'. 'mp' opens the
+"         menu and goes to the projects submenu, then 'h' hides it.
+"
+"         To unhide, turn off file filters (default: f), then put the cursor
+"         on the dir in question and hit 'mpu'
+"
 "
 "============================================================
 
